@@ -3,9 +3,6 @@
   "installCommand": "npm install",
   "framework": null,
   "regions": ["gru1"],
-  "experimental": {
-    "newElasticsearchScaling": false
-  },
   "functions": {
     "api/**/*.ts": {
       "runtime": "nodejs20.x",

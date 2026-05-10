@@ -5,11 +5,6 @@
   "outputDirectory": "public/dist",
   "regions": ["gru1"],
   "headers": [
-    { "source": "/(.*)", "headers": [{ "key": "X-Content-Type-Options", "value": "nosniff" }] }
-  ]
-}
-  },
-  "headers": [
     {
       "source": "/(.*)",
       "headers": [

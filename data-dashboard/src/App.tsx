@@ -10,8 +10,20 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import {
   Upload, FileSpreadsheet, FileText, Download, Trash2, Camera, Filter, X,
-  ChevronLeft, ChevronRight, Layers, Hash, BarChart3, Plus, Minus, Equal,
+  ChevronLeft, ChevronRight, Layers, Hash, BarChart3, Plus, Minus, Equal, CheckCircle2, Clock, AlertCircle
 } from 'lucide-react'
+
+function hashBuffer(buffer: ArrayBuffer): string {
+  const data = new Uint8Array(buffer)
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57
+  for (let i = 0; i < data.length; i++) {
+    h1 = Math.imul(h1 ^ Math.imul(data[i], 2654435761), 597399067)
+    h2 = Math.imul(h2 ^ Math.imul(data[i], 1597334677), 3812015801)
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 4242875139)
+  h2 = Math.imul(h2 ^ (h2 >>> 13), 3266489911)
+  return `${(h1 ^ h2) >>> 0}`
+}
 
 function Toast({ message, type }: { message: string; type: 'success' | 'error' | '' }) {
   if (!message) return null
@@ -23,6 +35,15 @@ function Toast({ message, type }: { message: string; type: 'success' | 'error' |
       {message}
     </div>
   )
+}
+
+type SnapshotStatus = { id: string; page: number; status: string; image_url: string | null; created_at: string }
+
+type PdfEntry = {
+  name: string; file: File; pages: number; pdfDoc: any;
+  pdf_hash: string; scale: number;
+  existingSnapshots: SnapshotStatus[]; // snapshots já no banco
+  localSnapshots: { num: number; canvas: HTMLCanvasElement }[]; // snapshots gerados nesta sessão
 }
 
 export default function Dashboard() {
@@ -46,7 +67,7 @@ export default function Dashboard() {
   const [aggOp, setAggOp] = useState('sum')
   const [aggData, setAggData] = useState<any[]>([])
 
-  const [pdfFiles, setPdfFiles] = useState<any[]>([])
+  const [pdfFiles, setPdfFiles] = useState<PdfEntry[]>([])
   const [scale, setScale] = useState(2)
   const [generating, setGenerating] = useState(false)
   const [progress, setProgress] = useState(0)
@@ -79,48 +100,81 @@ export default function Dashboard() {
   }, [])
 
   const handlePdfFiles = useCallback(async (files: FileList) => {
-    const newPdfs: any[] = []
+    const newPdfs: PdfEntry[] = []
     for (const file of files) {
       if (!file.name.toLowerCase().endsWith('.pdf')) continue
-      const formData = new FormData()
-      formData.append('file', file)
-      let pages = 0
+
+      const buffer = await file.arrayBuffer()
+      const hash = hashBuffer(buffer)
+
+      let pdfDoc: any = null
       try {
-        const res = await fetch('/api/pdf/upload', { method: 'POST', body: formData })
-        const data = await res.json()
-        if (data.success) pages = data.pages
-      } catch (e) {}
-      let pdfDoc = null
-      try {
-        const buffer = await file.arrayBuffer()
         pdfDoc = await pdfjsLib.getDocument({ data: buffer }).promise
       } catch (e) {}
-      newPdfs.push({ name: file.name, file, pages, pdfDoc, snapshots: [], ready: false })
+
+      let pages = 0
+      let existingSnapshots: SnapshotStatus[] = []
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        formData.append('scale', String(scale))
+        const res = await fetch('/api/pdf/snapshots', { method: 'POST', body: formData })
+        const data = await res.json()
+        if (data.success) {
+          pages = data.pages || 0
+          existingSnapshots = data.snapshots || []
+        }
+      } catch (e) {}
+
+      newPdfs.push({
+        name: file.name, file, pages, pdfDoc, pdf_hash: hash, scale,
+        existingSnapshots, localSnapshots: [],
+      })
     }
     setPdfFiles(prev => [...prev, ...newPdfs])
     toast(`${newPdfs.length} PDF(s) carregado(s)`, 'success')
-  }, [])
+  }, [scale])
 
   const generateAllSnapshots = useCallback(async () => {
     if (pdfFiles.length === 0) return
     setGenerating(true)
     setProgress(0)
-    const totalPages = pdfFiles.reduce((s, p) => s + p.pages, 0)
-    let done = 0
-    const updated: any[] = []
-    for (let i = 0; i < pdfFiles.length; i++) {
-      let pdf = pdfFiles[i]
-      if (!pdf.pdfDoc) {
-        try {
-          const buffer = await pdf.file.arrayBuffer()
-          pdf = { ...pdf, pdfDoc: await pdfjsLib.getDocument({ data: buffer }).promise }
-        } catch (e) {}
-      }
-      if (!pdf.pdfDoc) continue
-      const snaps: any[] = []
+
+    // Calcula páginas restantes (não-geradas)
+    const allPending: { pdf: PdfEntry; pageNum: number }[] = []
+    for (const pdf of pdfFiles) {
       for (let j = 1; j <= pdf.pages; j++) {
-        const page = await pdf.pdfDoc.getPage(j)
-        const vp = page.getViewport({ scale })
+        const done = pdf.existingSnapshots.find(s => s.page === j && s.status === 'done')
+        const localDone = pdf.localSnapshots.find(s => s.num === j)
+        if (!done && !localDone) {
+          allPending.push({ pdf, pageNum: j })
+        }
+      }
+    }
+
+    const total = allPending.length
+    let done = 0
+    const updatedPdfs: PdfEntry[] = []
+
+    for (const pdf of pdfFiles) {
+      let p = pdf
+      if (!p.pdfDoc) {
+        try {
+          const buf = await p.file.arrayBuffer()
+          p = { ...p, pdfDoc: await pdfjsLib.getDocument({ data: buf }).promise }
+        } catch (e) { updatedPdfs.push(p); continue }
+      }
+      if (!p.pdfDoc) { updatedPdfs.push(p); continue }
+
+      const newSnaps: { num: number; canvas: HTMLCanvasElement }[] = [...p.localSnapshots]
+
+      for (let j = 1; j <= p.pages; j++) {
+        const alreadyDone = p.existingSnapshots.find(s => s.page === j && s.status === 'done')
+        const localDone = newSnaps.find(s => s.num === j)
+        if (alreadyDone || localDone) continue
+
+        const page = await p.pdfDoc.getPage(j)
+        const vp = page.getViewport({ scale: p.scale })
         const canvas = document.createElement('canvas')
         canvas.width = vp.width
         canvas.height = vp.height
@@ -128,24 +182,39 @@ export default function Dashboard() {
         ctx.fillStyle = 'white'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         await page.render({ canvasContext: ctx, viewport: vp }).promise
-        snaps.push({ num: j, canvas })
+        newSnaps.push({ num: j, canvas })
         done++
-        setProgress(Math.round((done / totalPages) * 100))
+        if (total > 0) setProgress(Math.round((done / total) * 100))
       }
-      updated.push({ ...pdf, snapshots: snaps, ready: true })
+
+      updatedPdfs.push({ ...p, localSnapshots: newSnaps })
     }
-    setPdfFiles(updated)
+
+    setPdfFiles(updatedPdfs)
     setGenerating(false)
-    toast(`${done} snapshots gerados!`, 'success')
+    toast(`${done} snapshot(s) gerado(s) — ${updatedPdfs.reduce((s, p) => s + p.localSnapshots.length, 0)} total nesta sessão`, 'success')
   }, [pdfFiles, scale])
 
+  const isPdfReady = (pdf: PdfEntry) => {
+    const totalPages = pdf.pages
+    const doneExisting = pdf.existingSnapshots.filter(s => s.status === 'done').length
+    const doneLocal = pdf.localSnapshots.length
+    return doneExisting + doneLocal === totalPages && totalPages > 0
+  }
+
+  const getPageStatus = (pdf: PdfEntry, pageNum: number): 'done' | 'local' | 'pending' => {
+    if (pdf.existingSnapshots.find(s => s.page === pageNum && s.status === 'done')) return 'done'
+    if (pdf.localSnapshots.find(s => s.num === pageNum)) return 'local'
+    return 'pending'
+  }
+
   const downloadZip = useCallback(async () => {
-    const ready = pdfFiles.filter((p: any) => p.ready)
+    const ready = pdfFiles.filter(isPdfReady)
     if (!ready.length) return
     const zip = new JSZip()
     for (const pdf of ready) {
       const base = pdf.name.replace(/\.pdf$/i, '')
-      for (const snap of pdf.snapshots) {
+      for (const snap of pdf.localSnapshots) {
         const data = snap.canvas.toDataURL('image/png').split(',')[1]
         zip.file(`${base}_p${String(snap.num).padStart(3, '0')}.png`, data, { base64: true })
       }
@@ -159,7 +228,7 @@ export default function Dashboard() {
   }, [pdfFiles])
 
   const downloadPdf = useCallback(async () => {
-    const ready = pdfFiles.filter((p: any) => p.ready)
+    const ready = pdfFiles.filter(isPdfReady)
     if (!ready.length) return
     toast('Gerando PDF...', '')
     const { PDFDocument, rgb, StandardFonts } = PDFLib
@@ -169,7 +238,7 @@ export default function Dashboard() {
       const pdf = ready[i]
       const base = pdf.name.replace(/\.pdf$/i, '')
       const vl = `v${i + 1}: ${base}`
-      for (const snap of pdf.snapshots) {
+      for (const snap of pdf.localSnapshots) {
         const imgData = snap.canvas.toDataURL('image/png')
         const bytes = Uint8Array.from(atob(imgData.split(',')[1]), c => c.charCodeAt(0))
         const image = await pdfDoc.embedPng(bytes)
@@ -178,7 +247,7 @@ export default function Dashboard() {
         const page = pdfDoc.addPage([pw, ph])
         page.drawRectangle({ x: 0, y: ph - headerH, width: pw, height: headerH, color: rgb(0.2, 0.2, 0.35) })
         page.drawText(vl, { x: 15, y: ph - 32, size: 12, font, color: rgb(1, 1, 1) })
-        page.drawText(`Página ${snap.num} de ${pdf.snapshots.length}`, { x: 15, y: ph - 48, size: 9, font, color: rgb(0.8, 0.8, 0.8) })
+        page.drawText(`Página ${snap.num} de ${pdf.localSnapshots.length}`, { x: 15, y: ph - 48, size: 9, font, color: rgb(0.8, 0.8, 0.8) })
         page.drawImage(image, { x: 0, y: footerH, width: image.width, height: image.height })
         page.drawRectangle({ x: 0, y: 0, width: pw, height: footerH, color: rgb(0.93, 0.93, 0.93), opacity: 0.9 })
         page.drawText(`${base} - Página ${snap.num}`, { x: 15, y: 10, size: 9, font, color: rgb(0.4, 0.4, 0.4) })
@@ -191,6 +260,8 @@ export default function Dashboard() {
     a.click()
     toast('PDF baixado!', 'success')
   }, [pdfFiles])
+
+  const allReady = pdfFiles.length > 0 && pdfFiles.every(isPdfReady)
 
   const changePage = useCallback(async (page: number) => {
     if (!ssFile) return
@@ -247,6 +318,12 @@ export default function Dashboard() {
       toast('Exportado!', 'success')
     }
   }, [ssFile, selectedSheet])
+
+  const getPageIcon = (status: 'done' | 'local' | 'pending') => {
+    if (status === 'done') return <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+    if (status === 'local') return <CheckCircle2 className="w-3 h-3 text-blue-500" />
+    return <Clock className="w-3 h-3 text-slate-400" />
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -350,69 +427,88 @@ export default function Dashboard() {
                   <input id="pdf-upload" type="file" accept=".pdf" multiple className="hidden" onChange={e => { if (e.target.files?.length) handlePdfFiles(e.target.files) }} />
                   <FileText className="w-12 h-12 mx-auto text-slate-400 mb-4" />
                   <p className="text-lg font-semibold text-slate-700">Arraste PDFs aqui</p>
-                  <p className="text-sm text-slate-500 mt-1">múltiplos arquivos • .pdf</p>
+                  <p className="text-sm text-slate-500 mt-1">múltiplos arquivos • .pdf • snapshots reutilizados do banco</p>
                 </div>
               </CardContent>
             </Card>
 
             {pdfFiles.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between flex-wrap gap-4">
-                    <div className="flex items-center gap-2"><CardTitle className="flex items-center gap-2"><Layers className="w-5 h-5" /> PDFs Carregados</CardTitle><Badge variant="secondary">{pdfFiles.length}</Badge></div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Select value={String(scale)} onValueChange={v => setScale(Number(v))}><SelectTrigger className="w-20"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">1x</SelectItem><SelectItem value="2">2x</SelectItem><SelectItem value="3">3x</SelectItem></SelectContent></Select>
-                      <Button onClick={generateAllSnapshots} disabled={generating} className="gap-2"><Camera className="w-4 h-4" /> {generating ? 'Gerando...' : 'Gerar Snapshots'}</Button>
-                      <Button variant="outline" onClick={downloadZip} disabled={!pdfFiles.every((p: any) => p.ready)} className="gap-2"><Download className="w-4 h-4" /> ZIP</Button>
-                      <Button variant="outline" onClick={downloadPdf} disabled={!pdfFiles.every((p: any) => p.ready)} className="gap-2"><FileText className="w-4 h-4" /> PDF</Button>
-                      <Button variant="destructive" size="icon" onClick={() => { setPdfFiles([]); toast('Limpo!', 'success') }}><Trash2 className="w-4 h-4" /></Button>
+              <>
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between flex-wrap gap-4">
+                      <div className="flex items-center gap-2"><CardTitle className="flex items-center gap-2"><Layers className="w-5 h-5" /> PDFs Carregados</CardTitle><Badge variant="secondary">{pdfFiles.length}</Badge></div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Select value={String(scale)} onValueChange={v => setScale(Number(v))}><SelectTrigger className="w-20"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="1">1x</SelectItem><SelectItem value="2">2x</SelectItem><SelectItem value="3">3x</SelectItem></SelectContent></Select>
+                        <Button onClick={generateAllSnapshots} disabled={generating} className="gap-2"><Camera className="w-4 h-4" /> {generating ? `Gerando ${progress}%...` : 'Gerar Snapshots'}</Button>
+                        <Button variant="outline" onClick={downloadZip} disabled={!allReady} className="gap-2"><Download className="w-4 h-4" /> ZIP</Button>
+                        <Button variant="outline" onClick={downloadPdf} disabled={!allReady} className="gap-2"><FileText className="w-4 h-4" /> PDF</Button>
+                        <Button variant="destructive" size="icon" onClick={() => { setPdfFiles([]); toast('Limpo!', 'success') }}><Trash2 className="w-4 h-4" /></Button>
+                      </div>
                     </div>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  {generating && <div className="mb-4"><div className="flex justify-between text-sm mb-1"><span>Progresso</span><span>{progress}%</span></div><Progress value={progress} className="h-2" /></div>}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {pdfFiles.map((pdf: any, i: number) => (
-                      <div key={i} className={`p-3 rounded-lg border ${pdf.ready ? 'border-emerald-300 bg-emerald-50' : 'bg-slate-50'}`}>
-                        <div className="flex items-start gap-3">
-                          <FileText className="w-8 h-8 text-red-500 flex-shrink-0 mt-1" />
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-sm truncate">{pdf.name}</p>
-                            <p className="text-xs text-slate-500 mt-0.5">v{i + 1} • {pdf.pages} pág.</p>
-                            {pdf.ready && <p className="text-xs text-emerald-600 mt-1 font-medium">✓ Prontos: {pdf.snapshots.length}</p>}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {pdfFiles.some((p: any) => p.ready) && (
-              <Card>
-                <CardHeader><CardTitle className="flex items-center gap-2"><Camera className="w-5 h-5" /> Snapshots</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
-                    {pdfFiles.filter((p: any) => p.ready).map((pdf: any, pi: number) => (
-                      <div key={pi} className="border rounded-xl overflow-hidden">
-                        <div className="bg-indigo-600 text-white px-4 py-2 flex items-center justify-between">
-                          <span className="font-semibold">v{pi + 1}: {pdf.name}</span>
-                          <Badge className="bg-white/20 text-white border-0">{pdf.snapshots.length} pág.</Badge>
-                        </div>
-                        <div className="p-4 bg-slate-50 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {pdf.snapshots.map((snap: any) => (
-                            <div key={snap.num} className="bg-white rounded-lg overflow-hidden shadow-sm">
-                              <canvas ref={(canvas: any) => { if (canvas && snap.canvas) { const ctx = canvas.getContext('2d'); canvas.width = snap.canvas.width; canvas.height = snap.canvas.height; ctx?.drawImage(snap.canvas, 0, 0); } }} className="w-full" />
-                              <div className="p-2 text-center text-xs text-slate-500 bg-slate-100">Página {snap.num} de {pdf.snapshots.length}</div>
+                  </CardHeader>
+                  <CardContent>
+                    {generating && <div className="mb-4"><div className="flex justify-between text-sm mb-1"><span>Progresso</span><span>{progress}%</span></div><Progress value={progress} className="h-2" /></div>}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {pdfFiles.map((pdf: PdfEntry, i: number) => {
+                        const doneExisting = pdf.existingSnapshots.filter(s => s.status === 'done').length
+                        const doneLocal = pdf.localSnapshots.length
+                        const total = pdf.pages
+                        const ready = isPdfReady(pdf)
+                        const pending = total - doneExisting - doneLocal
+                        return (
+                          <div key={i} className={`p-3 rounded-lg border ${ready ? 'border-emerald-300 bg-emerald-50' : 'bg-slate-50'}`}>
+                            <div className="flex items-start gap-3">
+                              <FileText className={`w-8 h-8 flex-shrink-0 mt-1 ${ready ? 'text-emerald-500' : 'text-red-500'}`} />
+                              <div className="min-w-0 flex-1">
+                                <p className="font-semibold text-sm truncate">{pdf.name}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">v{i + 1} • {pdf.pages} pág.</p>
+                                {doneExisting > 0 && <p className="text-xs text-blue-600 mt-1 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> {doneExisting} do banco</p>}
+                                {doneLocal > 0 && <p className="text-xs text-indigo-600 mt-1 font-medium flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> {doneLocal} locais</p>}
+                                {pending > 0 && <p className="text-xs text-slate-400 mt-1 flex items-center gap-1"><Clock className="w-3 h-3" /> {pending} pendentes</p>}
+                                {ready && <p className="text-xs text-emerald-600 mt-1 font-medium">✓ Prontos: {total}</p>}
+                              </div>
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {pdfFiles.some((p: PdfEntry) => p.localSnapshots.length > 0) && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Camera className="w-5 h-5" /> Snapshots desta Sessão
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-6">
+                        {pdfFiles.filter((p: PdfEntry) => p.localSnapshots.length > 0).map((pdf: PdfEntry, pi: number) => (
+                          <div key={pi} className="border rounded-xl overflow-hidden">
+                            <div className="bg-indigo-600 text-white px-4 py-2 flex items-center justify-between">
+                              <span className="font-semibold">v{pi + 1}: {pdf.name}</span>
+                              <Badge className="bg-white/20 text-white border-0">{pdf.localSnapshots.length} pág.</Badge>
+                            </div>
+                            <div className="p-4 bg-slate-50 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {pdf.localSnapshots.map((snap: any) => (
+                                <div key={snap.num} className="bg-white rounded-lg overflow-hidden shadow-sm">
+                                  <canvas ref={(canvas: any) => { if (canvas && snap.canvas) { const ctx = canvas.getContext('2d'); canvas.width = snap.canvas.width; canvas.height = snap.canvas.height; ctx?.drawImage(snap.canvas, 0, 0); } }} className="w-full" />
+                                  <div className="p-2 text-center text-xs text-slate-500 bg-slate-100 flex items-center justify-center gap-1">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                                    Página {snap.num} de {pdf.localSnapshots.length}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                    </CardContent>
+                  </Card>
+                )}
+              </>
             )}
           </TabsContent>
         </Tabs>

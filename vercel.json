@@ -1,17 +1,19 @@
 {
-  "buildCommand": "echo 'Static build - no build needed'",
-  "installCommand": "echo 'No deps install needed'",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
   "framework": null,
-  "outputDirectory": "public",
   "regions": ["gru1"],
+  "experimental": {
+    "newElasticsearchScaling": false
+  },
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "nodejs20.x",
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
   "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Headers", "value": "*" }
-      ]
-    },
     {
       "source": "/(.*)",
       "headers": [

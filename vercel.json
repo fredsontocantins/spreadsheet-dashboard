@@ -1,0 +1,23 @@
+{
+  "buildCommand": "echo 'Static build - no build needed'",
+  "installCommand": "echo 'No deps install needed'",
+  "framework": null,
+  "outputDirectory": "public",
+  "regions": ["gru1"],
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Headers", "value": "*" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Cache-Control", "value": "max-age=0, must-revalidate" }
+      ]
+    }
+  ]
+}

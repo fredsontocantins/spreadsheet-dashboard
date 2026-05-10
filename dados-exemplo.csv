@@ -1,0 +1,19 @@
+-- Crie uma planilha de exemplo com dados para testar
+-- Salve como dados-exemplo.csv:
+
+Nome,Email,Departamento,Salario,Data Admissão
+Ana Silva,ana.silva@empresa.com,Recursos Humanos,5500,2022-03-15
+Bruno Santos,bruno.santos@empresa.com,Desenvolvimento,8500,2021-08-01
+Carlos Oliveira,carlos.oliveira@empresa.com,Marketing,6200,2023-01-10
+Diana Costa,diana.costa@empresa.com,Financeiro,7800,2020-05-20
+Eduardo Lima,eduardo.lima@empresa.com,Desenvolvimento,9200,2019-11-25
+Fernanda Souza,fernanda.souza@empresa.com,Recursos Humanos,4800,2023-06-01
+Gabriel Rocha,gabriel.rocha@empresa.com,Vendas,7100,2022-09-12
+Helena Alves,helena.alves@empresa.com,Marketing,5900,2021-04-30
+Igor Martins,igor.martins@empresa.com,Desenvolvimento,10500,2018-02-14
+Julia Pereira,julia.pereira@empresa.com,Financeiro,8300,2020-10-08
+Lucas Ferreira,lucas.ferreira@empresa.com,Vendas,6600,2023-03-22
+Maria Gonçalves,maria.goncalves@empresa.com,Recursos Humanos,5200,2021-07-19
+Nathan Barbosa,nathan.barbosa@empresa.com,Desenvolvimento,9800,2019-12-03
+Olivia Ribeiro,olivia.ribeiro@empresa.com,Marketing,7400,2022-05-14
+Paulo Vieira,paulo.vieira@empresa.com,Financeiro,8100,2020-08-27

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spreadsheet Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+    .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    h1 { margin-bottom: 20px; color: #1a1a2e; }
+    
+    .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 18px; margin-bottom: 16px; color: #1a1a2e; }
+    
+    .upload-zone { border: 2px dashed #ddd; border-radius: 8px; padding: 40px; text-align: center; cursor: pointer; transition: all 0.3s; }
+    .upload-zone:hover { border-color: #4f46e5; background: #f8f7ff; }
+    .upload-zone.dragover { border-color: #4f46e5; background: #f0f0ff; }
+    .upload-zone input { display: none; }
+    .upload-icon { font-size: 48px; margin-bottom: 16px; }
+    .upload-text { color: #666; }
+    .upload-text strong { color: #4f46e5; }
+    
+    .btn { background: #4f46e5; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s; }
+    .btn:hover { background: #4338ca; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+    .btn-secondary { background: #6b7280; }
+    .btn-secondary:hover { background: #5b6270; }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; }
+    .stat-card { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; }
+    .stat-card .value { font-size: 32px; font-weight: bold; }
+    .stat-card .label { font-size: 12px; opacity: 0.9; margin-top: 4px; }
+    
+    .filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .filter-group label { font-size: 12px; font-weight: 500; color: #666; }
+    .filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: #f8f9fa; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e5e7eb; position: sticky; top: 0; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    tr:hover { background: #f9fafb; }
+    
+    .pagination { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 16px; }
+    .pagination button { padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; }
+    .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .pagination span { padding: 8px; color: #666; }
+    
+    .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #e5e7eb; }
+    .tab { padding: 10px 16px; cursor: pointer; border: none; background: none; font-size: 14px; color: #666; }
+    .tab.active { color: #4f46e5; border-bottom: 2px solid #4f46e5; margin-bottom: -1px; }
+    
+    .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
+    .chart-container { background: white; border-radius: 12px; padding: 20px; }
+    
+    .spreadsheet-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-top: 16px; }
+    .spreadsheet-item { background: #f8f9fa; padding: 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .spreadsheet-item .name { font-weight: 500; }
+    .spreadsheet-item .meta { font-size: 12px; color: #666; }
+    
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 12px 20px; border-radius: 8px; animation: slideIn 0.3s; }
+    .toast.success { background: #10b981; }
+    .toast.error { background: #ef4444; }
+    @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+    
+    .json-viewer { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 12px; max-height: 400px; overflow: auto; white-space: pre; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📊 Spreadsheet Dashboard</h1>
+    
+    <div class="card">
+      <h2>Upload de Arquivos</h2>
+      <div class="upload-zone" id="uploadZone">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" multiple>
+        <div class="upload-icon">📁</div>
+        <p class="upload-text">Arraste arquivos aqui ou <strong>clique para selecionar</strong></p>
+        <p style="font-size: 12px; color: #999; margin-top: 8px;">Suporta .xlsx, .xls e .csv</p>
+      </div>
+    </div>
+    
+    <div id="statsSection" class="card" style="display: none;">
+      <h2>Estatísticas</h2>
+      <div class="stats-grid" id="statsGrid"></div>
+    </div>
+    
+    <div id="filtersSection" class="card" style="display: none;">
+      <h2>Filtros e Busca</h2>
+      <div class="filters" id="filtersContainer"></div>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn" onclick="applyFilters()">Aplicar Filtros</button>
+        <button class="btn btn-secondary" onclick="clearFilters()">Limpar</button>
+      </div>
+    </div>
+    
+    <div id="dataSection" class="card" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2>Dados</h2>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-sm" onclick="exportData('csv')">Exportar CSV</button>
+          <button class="btn btn-sm" onclick="exportData('xlsx')">Exportar XLSX</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table id="dataTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="pagination"></div>
+    </div>
+    
+    <div id="aggregateSection" class="card" style="display: none;">
+      <h2>Agrupamento e Agregação</h2>
+      <div style="display: flex; gap: 16px; margin-bottom: 16px;">
+        <div class="filter-group">
+          <label>Agrupar por</label>
+          <select id="groupBy"><option value="">Selecione...</option></select>
+        </div>
+        <div class="filter-group">
+          <label>Operação</label>
+          <select id="aggOperation">
+            <option value="sum">Soma</option>
+            <option value="avg">Média</option>
+            <option value="min">Mínimo</option>
+            <option value="max">Máximo</option>
+            <option value="count">Contagem</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Campo</label>
+          <select id="aggField"><option value="">Selecione...</option></select>
+        </div>
+        <div style="display: flex; align-items: flex-end;">
+          <button class="btn" onclick="runAggregation()">Agrupar</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table id="aggregateTable"><thead></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentData = [];
+    let currentHeaders = [];
+    let filteredData = [];
+    let currentPage = 1;
+    let pageSize = 50;
+    
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+    
+    uploadZone.addEventListener('click', () => fileInput.click());
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+    uploadZone.addEventListener('drop', e => {
+      e.preventDefault();
+      uploadZone.classList.remove('dragover');
+      handleFiles(e.dataTransfer.files);
+    });
+    fileInput.addEventListener('change', e => handleFiles(e.target.files));
+    
+    async function handleFiles(files) {
+      if (files.length === 0) return;
+      const formData = new FormData();
+      for (const f of files) formData.append('file', f);
+      
+      try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error);
+        
+        showToast('Arquivo carregado com sucesso!', 'success');
+        
+        const previewRes = await fetch('/api/preview', { method: 'POST', body: formData });
+        const preview = await previewRes.json();
+        
+        currentHeaders = preview.headers;
+        currentData = preview.data;
+        filteredData = [...currentData];
+        
+        renderStats(preview);
+        renderFilters();
+        renderTable();
+        
+        document.getElementById('statsSection').style.display = 'block';
+        document.getElementById('filtersSection').style.display = 'block';
+        document.getElementById('dataSection').style.display = 'block';
+        document.getElementById('aggregateSection').style.display = 'block';
+        
+        updateAggregateOptions();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+    
+    function renderStats(preview) {
+      const stats = document.getElementById('statsGrid');
+      const total = preview.totalRows;
+      const numericCols = preview.headers.filter(h => 
+        preview.data.slice(0, 10).every(row => !isNaN(parseFloat(row[h])))
+      );
+      
+      let html = `<div class="stat-card"><div class="value">${total}</div><div class="label">Total de Linhas</div></div>`;
+      html += `<div class="stat-card"><div class="value">${preview.headers.length}</div><div class="label">Colunas</div></div>`;
+      html += `<div class="stat-card"><div class="value">${numericCols.length}</div><div class="label">Numéricas</div></div>`;
+      
+      numericCols.slice(0, 3).forEach(col => {
+        const sum = currentData.reduce((acc, row) => acc + (parseFloat(row[col]) || 0), 0);
+        html += `<div class="stat-card"><div class="value">${formatNumber(sum)}</div><div class="label">Soma: ${col}</div></div>`;
+      });
+      
+      stats.innerHTML = html;
+    }
+    
+    function renderFilters() {
+      const container = document.getElementById('filtersContainer');
+      container.innerHTML = currentHeaders.map(h => `
+        <div class="filter-group">
+          <label>${h}</label>
+          <input type="text" placeholder="Buscar..." data-field="${h}" onkeyup="if(event.key==='Enter')applyFilters()">
+        </div>
+      `).join('');
+    }
+    
+    function applyFilters() {
+      const filters = {};
+      document.querySelectorAll('#filtersContainer input').forEach(input => {
+        if (input.value) {
+          filters[input.dataset.field] = { value: input.value, operator: 'contains' };
+        }
+      });
+      
+      filteredData = currentData.filter(row => {
+        for (const [field, cond] of Object.entries(filters)) {
+          const cell = String(row[field] || '').toLowerCase();
+          const val = String(cond.value).toLowerCase();
+          if (!cell.includes(val)) return false;
+        }
+        return true;
+      });
+      
+      currentPage = 1;
+      renderTable();
+      showToast(`${filteredData.length} registros encontrados`);
+    }
+    
+    function clearFilters() {
+      document.querySelectorAll('#filtersContainer input').forEach(i => i.value = '');
+      filteredData = [...currentData];
+      currentPage = 1;
+      renderTable();
+    }
+    
+    function renderTable() {
+      const thead = document.querySelector('#dataTable thead');
+      const tbody = document.querySelector('#dataTable tbody');
+      const start = (currentPage - 1) * pageSize;
+      const pageData = filteredData.slice(start, start + pageSize);
+      const totalPages = Math.ceil(filteredData.length / pageSize);
+      
+      thead.innerHTML = `<tr>${currentHeaders.map(h => `<th>${h}</th>`).join('')}</tr>`;
+      tbody.innerHTML = pageData.map(row => 
+        `<tr>${currentHeaders.map(h => `<td title="${row[h]}">${row[h] ?? ''}</td>`).join('')}</tr>`
+      ).join('');
+      
+      document.getElementById('pagination').innerHTML = `
+        <button ${currentPage <= 1 ? 'disabled' : ''} onclick="changePage(${currentPage - 1})">◀</button>
+        <span>Página ${currentPage} de ${totalPages}</span>
+        <button ${currentPage >= totalPages ? 'disabled' : ''} onclick="changePage(${currentPage + 1})">▶</button>
+      `;
+    }
+    
+    function changePage(p) {
+      currentPage = p;
+      renderTable();
+    }
+    
+    function updateAggregateOptions() {
+      const numericCols = currentHeaders.filter(h => 
+        currentData.slice(0, 10).every(row => !isNaN(parseFloat(row[h])))
+      );
+      
+      document.getElementById('groupBy').innerHTML = '<option value="">Sem agrupamento</option>' + 
+        currentHeaders.map(h => `<option value="${h}">${h}</option>`).join('');
+      document.getElementById('aggField').innerHTML = '<option value="">Selecione...</option>' +
+        numericCols.map(h => `<option value="${h}">${h}</option>`).join('');
+    }
+    
+    async function runAggregation() {
+      const groupBy = document.getElementById('groupBy').value;
+      const operation = document.getElementById('aggOperation').value;
+      const field = document.getElementById('aggField').value;
+      
+      if (!field) return alert('Selecione um campo numérico');
+      
+      const res = await fetch('/api/aggregate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          data: filteredData,
+          groupBy: groupBy || undefined,
+          aggregations: [{ field, operation }]
+        })
+      });
+      
+      const json = await res.json();
+      const data = json.data || [];
+      
+      const headers = groupBy ? [groupBy, 'count', `${field}_${operation}`] : ['total', 'count', `${field}_${operation}`];
+      document.querySelector('#aggregateTable thead').innerHTML = `<tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>`;
+      document.querySelector('#aggregateTable tbody').innerHTML = data.map(row =>
+        `<tr>${headers.map(h => `<td>${row[h] ?? ''}</td>`).join('')}</tr>`
+      ).join('');
+      
+      showToast('Agrupamento calculado');
+    }
+    
+    async function exportData(format) {
+      const res = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: filteredData, format, filename: 'dashboard-export' })
+      });
+      
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `export.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      showToast('Arquivo exportado!', 'success');
+    }
+    
+    function formatNumber(n) {
+      if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+      return n.toFixed(2);
+    }
+    
+    function showToast(msg, type = '') {
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+  </script>
+</body>
+</html>

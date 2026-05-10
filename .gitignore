@@ -1,7 +1,6 @@
 .vercel
 node_modules
 data-dashboard/node_modules
-public/index.html
 uploads
 .env
 .env.*
